@@ -17,7 +17,7 @@ public static class DependencyInjection
             ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
 
         services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseNpgsql(connectionString));
+            options.UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(5)));
 
         services.Configure<JwtSettings>(configuration.GetSection(JwtSettings.SectionName));
 

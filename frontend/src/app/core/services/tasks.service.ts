@@ -1,12 +1,17 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { CreateTaskRequest, TaskDto, UpdateTaskRequest, UpdateTaskStatusRequest } from '../../shared/models/task.model';
+import {
+  CreateTaskRequest,
+  TaskDto,
+  UpdateTaskRequest,
+  UpdateTaskStatusRequest,
+} from '../../shared/models/task.model';
 
 @Injectable({ providedIn: 'root' })
 export class TasksService {
-  constructor(private readonly http: HttpClient) {}
+  private readonly http = inject(HttpClient);
 
   private baseUrl(projectId: string): string {
     return `${environment.apiUrl}/projects/${projectId}/tasks`;
@@ -24,7 +29,11 @@ export class TasksService {
     return this.http.put<TaskDto>(`${this.baseUrl(projectId)}/${taskId}`, request);
   }
 
-  updateStatus(projectId: string, taskId: string, request: UpdateTaskStatusRequest): Observable<TaskDto> {
+  updateStatus(
+    projectId: string,
+    taskId: string,
+    request: UpdateTaskStatusRequest,
+  ): Observable<TaskDto> {
     return this.http.patch<TaskDto>(`${this.baseUrl(projectId)}/${taskId}/status`, request);
   }
 
