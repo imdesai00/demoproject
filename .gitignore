@@ -1,0 +1,32 @@
+# ---- Environment / secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Backend (.NET) ----
+backend/**/bin/
+backend/**/obj/
+backend/**/*.user
+backend/**/appsettings.Local.json
+*.pdb
+
+# ---- Frontend (Angular / Node) ----
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/npm-debug.log*
+frontend/coverage/
+
+# ---- IDE / OS ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- Docker ----
+docker/**/*.log
+
+# ---- Logs ----
+*.log
+logs/
