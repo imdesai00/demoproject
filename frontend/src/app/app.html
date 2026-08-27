@@ -1,0 +1,26 @@
+<div class="min-h-screen bg-surface-50">
+  @if (auth.isAuthenticated()) {
+    <header class="border-b border-surface-200 bg-white">
+      <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
+        <a routerLink="/dashboard" class="flex items-center gap-2 text-lg font-semibold text-surface-800">
+          <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">T</span>
+          TaskFlow
+        </a>
+        <div class="flex items-center gap-4">
+          <span class="hidden text-sm text-surface-500 sm:inline">{{ auth.currentUser()?.displayName }}</span>
+          <button
+            type="button"
+            (click)="logout()"
+            class="rounded-md border border-surface-300 px-3 py-1.5 text-sm font-medium text-surface-600 transition hover:bg-surface-100"
+          >
+            Log out
+          </button>
+        </div>
+      </div>
+    </header>
+  }
+
+  <main>
+    <router-outlet></router-outlet>
+  </main>
+</div>
