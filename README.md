@@ -35,7 +35,7 @@ demoproject/
 │       ├── core/             Guards, interceptors, singleton services (auth, projects, tasks, dashboard)
 │       ├── shared/           Reusable UI components, models (typed DTOs), utils
 │       └── features/         Route-level feature areas: auth, dashboard, projects
-├── docker/                   Dockerfiles + nginx config
+├── docker/                   Backend/frontend Dockerfiles
 ├── docker-compose.yml         One-command orchestration of postgres + backend + frontend
 ├── .env.example               Template for local secrets/config (copy to .env)
 └── .github/workflows/         CI: backend-ci.yml, frontend-ci.yml
@@ -50,15 +50,24 @@ flowchart LR
     end
 
     subgraph "Docker Compose network"
-        FE[nginx :80<br/>serves Angular build<br/>proxies /api]
+        FE[frontend container :80<br/>static file server, no proxy]
         BE[ASP.NET Core API :8080<br/>Controllers → Services → Repositories]
-        DB[(PostgreSQL)]
     end
 
-    UI -- HTTP --> FE
-    FE -- "/api/*" --> BE
-    BE -- EF Core --> DB
+    subgraph "Your machine"
+        DB[(PostgreSQL, running natively)]
+    end
+
+    UI -- "HTTP :4200" --> FE
+    UI -- "HTTP :5000/api (direct, CORS)" --> BE
+    BE -- "EF Core, via host.docker.internal" --> DB
 ```
+
+There's no reverse proxy in front of these containers — the frontend serves the built Angular files as
+plain static assets and the browser calls the backend's published port directly (CORS is configured on the
+backend to allow it). PostgreSQL is **not** containerized here: it runs natively on your machine, and the
+backend container reaches it via Docker's `host.docker.internal` DNS name. If you want a reverse proxy or
+TLS in front of either service, that's on you to add (e.g. your own nginx/Caddy in front of both ports).
 
 **Backend** follows a layered architecture:
 
@@ -125,23 +134,79 @@ owns the project/task being accessed (403 otherwise, 404 if it doesn't exist).
 
 Full interactive API docs (Swagger/OpenAPI) are available at `/swagger` once the backend is running.
 
+## Local PostgreSQL setup
+
+This project does **not** run Postgres in a container — the backend container connects to PostgreSQL
+running natively on your machine. You only need to do this once.
+
+**macOS (Homebrew):**
+
+```bash
+brew install postgresql@16
+brew services start postgresql@16
+```
+
+Create the app's database and user (change the password to whatever you'll put in `.env`):
+
+```bash
+createdb taskmanager
+psql postgres -c "CREATE USER taskmanager WITH PASSWORD 'yourpassword';"
+psql postgres -c "GRANT ALL PRIVILEGES ON DATABASE taskmanager TO taskmanager;"
+psql -d taskmanager -c "GRANT ALL ON SCHEMA public TO taskmanager;"
+```
+
+Allow connections from Docker Desktop's internal network. Find your config files with:
+
+```bash
+psql postgres -c "SHOW config_file;"
+psql postgres -c "SHOW hba_file;"
+```
+
+Edit `postgresql.conf` (the first path above) and make sure this line is uncommented and set to `*`:
+
+```
+listen_addresses = '*'
+```
+
+Edit `pg_hba.conf` (the second path above) and add this line (local-dev convenience — it allows password-
+authenticated connections from any address, which is fine on a machine you control; narrow the CIDR later
+if you want it tighter):
+
+```
+host    all             all             0.0.0.0/0               scram-sha-256
+```
+
+Restart Postgres for the changes to take effect:
+
+```bash
+brew services restart postgresql@16
+```
+
+**Windows / other setups:** same three steps — create the `taskmanager` DB/user, set `listen_addresses = '*'`
+in `postgresql.conf`, and add the `host all all 0.0.0.0/0 scram-sha-256` line to `pg_hba.conf` — just adjust
+the install/service commands and config file locations for your platform (on native Windows Postgres,
+config files live under `C:\Program Files\PostgreSQL\<version>\data\`).
+
 ## Running it — Docker Compose (one command)
 
-**Prerequisites:** Docker and Docker Compose.
+**Prerequisites:** Docker Desktop, and a local PostgreSQL set up per the section above and currently running.
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and set real values for `POSTGRES_PASSWORD` and `JWT_SECRET` (the compose file refuses to start
-without them — see the comments in `.env.example`). Then:
+Open `.env` and set real values for `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` to match the
+database/user you just created, and set `JWT_SECRET` to a long random string (the compose file refuses to
+start without these — see the comments in `.env.example`). Then:
 
 ```bash
 docker compose up --build
 ```
 
-This builds and starts three containers — `postgres`, `backend`, `frontend` — with the backend
-automatically applying EF Core migrations against Postgres on startup (no manual migration step needed).
+This builds and starts two containers — `backend` and `frontend`. The backend reaches your local Postgres
+via Docker's `host.docker.internal` DNS name and automatically applies EF Core migrations on startup (no
+manual migration step needed). There's no nginx or reverse proxy — the frontend serves static files
+directly and calls the backend on its own published port.
 
 Once everything is healthy:
 
@@ -149,9 +214,14 @@ Once everything is healthy:
 - **API + Swagger:** http://localhost:5000/swagger (or whatever `BACKEND_PORT` you set)
 
 Register an account, create a project, add a task, drag it across the kanban columns, and log out — that's
-the full golden path, no manual steps beyond `docker compose up`.
+the full golden path, no manual steps beyond `docker compose up` (with local Postgres already running).
 
-To stop: `docker compose down` (add `-v` to also drop the Postgres volume and start fresh).
+To stop: `docker compose down`.
+
+**If the backend keeps restarting / can't connect to the database:** double-check Postgres is running
+(`brew services list` on macOS), that the `.env` credentials match what you created above, and that the
+`pg_hba.conf`/`listen_addresses` changes were actually applied (`brew services restart postgresql@16` after
+editing them). `docker compose logs backend` will show the connection error.
 
 ## Running it locally without Docker (development)
 
@@ -211,14 +281,16 @@ Compose) or a local, git-ignored `appsettings.Development.json` / shell environm
 - Feature-based Angular structure, route guards, an auth interceptor with automatic token refresh
 - Loading / error / empty states throughout, responsive layout
 - Unit tests on both sides proving the pattern (not exhaustive coverage)
-- Docker Compose bringing up the full stack with one command, with health checks and automatic migrations
+- Docker Compose bringing up the app containers with one command against your local Postgres, with health
+  checks and automatic migrations
 - CI running build + lint + test on every push, split by frontend/backend
 
 **Still needed for a real production deployment:**
 - **Secret management** — `.env` files are fine for local dev; production should pull secrets from a
   managed secret store (Azure Key Vault, AWS Secrets Manager, Doppler, etc.), not files on disk.
-- **HTTPS/TLS** — nginx currently serves plain HTTP; production needs TLS termination (a load balancer,
-  Caddy/Traefik with automatic certs, or a cloud provider's managed HTTPS).
+- **HTTPS/TLS** — both containers currently serve plain HTTP with no reverse proxy in front of them;
+  production needs TLS termination (a load balancer, nginx/Caddy/Traefik with automatic certs, or a cloud
+  provider's managed HTTPS) and a managed/containerized Postgres instead of one running on a developer machine.
 - **Logging & monitoring** — no structured logging sink, metrics, tracing, or alerting is wired up
   (e.g. Serilog + an aggregator, Application Insights/Datadog/Grafana, uptime checks).
 - **Refresh token storage** — tokens live in `localStorage`, which is simple but vulnerable to XSS token
