@@ -99,6 +99,7 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     var strategy = db.Database.CreateExecutionStrategy();
     strategy.Execute(() => db.Database.Migrate());
+    await DbSeeder.SeedAsync(db, app.Logger);
 }
 
 app.UseSwagger();

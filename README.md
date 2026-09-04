@@ -216,6 +216,22 @@ Once everything is healthy:
 Register an account, create a project, add a task, drag it across the kanban columns, and log out — that's
 the full golden path, no manual steps beyond `docker compose up` (with local Postgres already running).
 
+### Demo account (seeded data)
+
+On startup the backend seeds a demo account **only if the `Users` table is empty**, so a fresh database
+comes up with something to look at instead of a blank dashboard:
+
+| Email | Password |
+|---|---|
+| `demo@taskflow.app` | `Demo123!` |
+
+It owns 3 projects ("Website Redesign", "Mobile App Launch", "Q3 Marketing Campaign") with 15 tasks
+spread across the Todo / In Progress / Done columns. The seeder
+([`DbSeeder`](backend/src/TaskManager.Infrastructure/Persistence/DbSeeder.cs), called from
+`Program.cs` after migrations) is a no-op once any user exists, so it never overwrites real data — to
+re-seed, empty the `Users` table (cascades to projects/tasks) and restart the backend. This is a
+convenience for local/demo use; remove the `DbSeeder.SeedAsync` call for a real deployment.
+
 To stop: `docker compose down`.
 
 **If the backend keeps restarting / can't connect to the database:** double-check Postgres is running
