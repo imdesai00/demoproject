@@ -4,11 +4,16 @@
 !.env.example
 
 # ---- Backend (.NET) ----
-backend/**/bin/
-backend/**/obj/
-backend/**/*.user
-backend/**/appsettings.Local.json
+bin/
+obj/
+**/bin/
+**/obj/
+**/*.user
+**/appsettings.Local.json
 *.pdb
+
+# ---- Identity.Api's local RSA signing key (dev-only; mounted from a volume/secret in prod) ----
+src/Services/Identity/Identity.Api/keys/
 
 # ---- Frontend (Angular / Node) ----
 frontend/node_modules/

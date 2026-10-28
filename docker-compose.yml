@@ -1,22 +1,58 @@
 services:
-  backend:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?POSTGRES_SUPERUSER_PASSWORD must be set in .env}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres-init/00-init-all.sh:/docker-entrypoint-initdb.d/00-init-all.sh:ro
+      - ./src/Services/Identity/database:/service-db/identity:ro
+      - ./src/Services/Project/database:/service-db/project:ro
+      - ./src/Services/Task/database:/service-db/task:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-taskflow}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-taskflow_dev_password}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  identity-api:
     build:
       context: .
-      dockerfile: docker/backend.Dockerfile
+      dockerfile: src/Services/Identity/Identity.Api/Dockerfile
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
-      ConnectionStrings__DefaultConnection: "Host=host.docker.internal;Port=${POSTGRES_PORT:-5432};Database=${POSTGRES_DB:?POSTGRES_DB must be set in .env};Username=${POSTGRES_USER:?POSTGRES_USER must be set in .env};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}"
-      Jwt__Secret: ${JWT_SECRET:?JWT_SECRET must be set in .env}
-      Jwt__Issuer: ${JWT_ISSUER:-TaskManager}
-      Jwt__Audience: ${JWT_AUDIENCE:-TaskManagerClient}
-      Jwt__AccessTokenMinutes: ${JWT_ACCESS_TOKEN_MINUTES:-15}
-      Jwt__RefreshTokenDays: ${JWT_REFRESH_TOKEN_DAYS:-7}
+      ConnectionStrings__Db: "Host=postgres;Port=5432;Database=identity_db;Username=svc_identity;Password=svc_identity_dev_password"
+      Jwt__SigningKeyPath: /app/keys/identity-signing-key.pem
       Cors__AllowedOrigins__0: "http://localhost:${FRONTEND_PORT:-4200}"
+    volumes:
+      - identity_keys:/app/keys
     ports:
-      - "${BACKEND_PORT:-5000}:8080"
+      - "${IDENTITY_PORT:-5100}:8080"
     healthcheck:
       # /dev/tcp is a bash builtin; the image's /bin/sh is dash, so call bash explicitly.
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080"]
@@ -25,15 +61,95 @@ services:
       retries: 10
       start_period: 15s
 
+  project-api:
+    build:
+      context: .
+      dockerfile: src/Services/Project/Project.Api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      identity-api:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ConnectionStrings__Db: "Host=postgres;Port=5432;Database=project_db;Username=svc_project;Password=svc_project_dev_password"
+      Jwt__JwksUrl: "http://identity-api:8080/.well-known/jwks.json"
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__UserName: ${RABBITMQ_USER:-taskflow}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:-taskflow_dev_password}
+      Services__TaskApiBaseUrl: "http://task-api:8080"
+      Cors__AllowedOrigins__0: "http://localhost:${FRONTEND_PORT:-4200}"
+    ports:
+      - "${PROJECT_PORT:-5200}:8080"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  task-api:
+    build:
+      context: .
+      dockerfile: src/Services/Task/Task.Api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      identity-api:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ConnectionStrings__Db: "Host=postgres;Port=5432;Database=task_db;Username=svc_task;Password=svc_task_dev_password"
+      Jwt__JwksUrl: "http://identity-api:8080/.well-known/jwks.json"
+      Jwt__Audience: task-service
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__UserName: ${RABBITMQ_USER:-taskflow}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:-taskflow_dev_password}
+      Services__ProjectApiBaseUrl: "http://project-api:8080"
+      Cors__AllowedOrigins__0: "http://localhost:${FRONTEND_PORT:-4200}"
+    ports:
+      - "${TASK_PORT:-5300}:8080"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  api-gateway:
+    image: apache/apisix:3.9.1-debian
+    restart: unless-stopped
+    depends_on:
+      identity-api:
+        condition: service_healthy
+      project-api:
+        condition: service_healthy
+      task-api:
+        condition: service_healthy
+    volumes:
+      - ./src/ApiGateway/apisix_conf/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./src/ApiGateway/apisix_conf/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    ports:
+      - "${GATEWAY_PORT:-9080}:9080"
+
   frontend:
     build:
       context: .
       dockerfile: docker/frontend.Dockerfile
       args:
-        API_URL: ${API_BASE_URL:-http://localhost:5000/api}
+        API_URL: ${API_BASE_URL:-http://localhost:9080/api}
     restart: unless-stopped
     depends_on:
-      backend:
-        condition: service_healthy
+      - api-gateway
     ports:
       - "${FRONTEND_PORT:-4200}:80"
+
+volumes:
+  postgres_data:
+  identity_keys:
