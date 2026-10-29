@@ -1,0 +1,55 @@
+# Declarative routes for APISIX standalone mode (no etcd). Upstream hostnames are the
+# docker-compose service names; see ../../../docker-compose.yml.
+#
+# Route precedence: APISIX's radix tree already prefers the longest matching `uri`, but since
+# "/api/projects/{id}/tasks" and "/api/projects/{id}" share the same prefix, the tasks routes
+# are pinned to a higher `priority` and narrowed with a `vars` regex so they never get shadowed
+# by the generic /api/projects catch-all.
+routes:
+  - uri: /.well-known/jwks.json
+    priority: 20
+    upstream:
+      type: roundrobin
+      nodes:
+        "identity-api:8080": 1
+
+  - uri: /api/auth/*
+    priority: 20
+    upstream:
+      type: roundrobin
+      nodes:
+        "identity-api:8080": 1
+
+  - uri: /api/internal/tasks/*
+    priority: 20
+    upstream:
+      type: roundrobin
+      nodes:
+        "task-api:8080": 1
+
+  # /api/projects/{id}/tasks and everything under it -> Task.Api
+  - uri: /api/projects/*
+    priority: 10
+    vars:
+      - ["uri", "~~", "^/api/projects/[^/]+/tasks"]
+    upstream:
+      type: roundrobin
+      nodes:
+        "task-api:8080": 1
+
+  - uri: /api/dashboard/*
+    priority: 20
+    upstream:
+      type: roundrobin
+      nodes:
+        "project-api:8080": 1
+
+  # Everything else under /api/projects (list/create/get/update/delete a project) -> Project.Api
+  - uri: /api/projects*
+    priority: 0
+    upstream:
+      type: roundrobin
+      nodes:
+        "project-api:8080": 1
+
+#END

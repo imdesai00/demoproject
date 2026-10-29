@@ -1,7 +1,8 @@
 // This file's apiUrl is overwritten at Docker build time (see docker/frontend.Dockerfile,
-// driven by API_BASE_URL in .env). The value below is only used for a plain `ng build`
-// run outside Docker.
+// driven by API_BASE_URL in .env — the microservices compose stack sets it to the APISIX
+// gateway's address, e.g. http://localhost:9080/api). The value below is only used for a
+// plain `ng build` run outside Docker.
 export const environment = {
   production: true,
-  apiUrl: 'http://localhost:5000/api'
+  apiUrl: 'http://localhost:9080/api'
 };
